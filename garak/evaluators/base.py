@@ -126,11 +126,32 @@ class Evaluator:
             outputs_evaluated = passes + fails
             outputs_processed = passes + fails + nones
 
+            skip_reason = None
+            if outputs_evaluated == 0:
+                if nones > 0:
+                    skip_reason = (
+                        f"all {nones} detector result(s) were None "
+                        f"(detector may not support this probe's output modality)"
+                    )
+                elif outputs_processed == 0:
+                    skip_reason = (
+                        "no outputs to evaluate "
+                        "(probe may have produced no attempts or all attempts were empty)"
+                    )
+                else:
+                    skip_reason = "no evaluable scores returned by detector"
+                logging.info(
+                    "detector %s skipped for probe %s: %s",
+                    detector,
+                    self.probename,
+                    skip_reason,
+                )
+
             if _config.system.narrow_output:
                 print_func = self.print_results_narrow
             else:
                 print_func = self.print_results_wide
-            print_func(detector, passes, outputs_evaluated, messages)
+            print_func(detector, passes, outputs_evaluated, messages, skip_reason)
 
             _config.transient.reportfile.write(
                 json.dumps(
@@ -167,7 +188,12 @@ class Evaluator:
         return zscore, zrating_symbol
 
     def print_results_wide(
-        self, detector_name, passes, evals, messages: List | None = None
+        self,
+        detector_name,
+        passes,
+        evals,
+        messages: List | None = None,
+        skip_reason: str | None = None,
     ):
         """Print the evaluator's summary"""
 
@@ -197,6 +223,11 @@ class Evaluator:
             f" ok on {passes:>4}/{evals:>4}",
             end="",
         )
+        if not evals and skip_reason:
+            print(
+                f"   ({Fore.LIGHTYELLOW_EX}reason:{Style.RESET_ALL} {skip_reason})",
+                end="",
+            )
         if evals and failrate > 0.0:
             print(
                 f"   ({Fore.LIGHTRED_EX}attack success rate:{Style.RESET_ALL} {failrate:6.2f}%)",
@@ -216,7 +247,12 @@ class Evaluator:
                     pass
 
     def print_results_narrow(
-        self, detector_name, passes, evals, messages: List | None = None
+        self,
+        detector_name,
+        passes,
+        evals,
+        messages: List | None = None,
+        skip_reason: str | None = None,
     ):
         """Print the evaluator's summary"""
 
@@ -249,6 +285,10 @@ class Evaluator:
         print(
             f"  {Style.BRIGHT}{outcome}{Style.RESET_ALL} score {passes:>4}/{evals:>4} -- {short_detector_name:<20}"
         )
+        if not evals and skip_reason:
+            print(
+                f"    {Fore.LIGHTYELLOW_EX}skip reason:{Style.RESET_ALL} {skip_reason}"
+            )
         if evals and failrate > 0.0:
             print(
                 f"    {Fore.LIGHTRED_EX}attack success rate:{Style.RESET_ALL} {failrate:6.2f}%",

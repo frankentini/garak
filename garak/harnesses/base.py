@@ -142,8 +142,11 @@ class Harness(Configurable):
 
             if not modality_match:
                 logging.warning(
-                    "probe skipped due to modality mismatch: %s - model expects %s",
+                    "probe skipped due to modality mismatch: %s requires %s "
+                    "but model accepts %s - all detectors for this probe will "
+                    "show SKIP",
                     probe.probename,
+                    probe.modality["in"],
                     model.modality["in"],
                 )
                 continue
@@ -160,6 +163,12 @@ class Harness(Configurable):
                 attempt_iterator.set_description("detectors." + detector_probe_name)
                 for attempt in attempt_iterator:
                     if d.skip:
+                        logging.info(
+                            "detector %s skipped for probe %s: "
+                            "detector skip flag is set",
+                            d.detectorname,
+                            probe.probename,
+                        )
                         continue
                     attempt.detector_results[detector_probe_name] = list(
                         d.detect(attempt)
