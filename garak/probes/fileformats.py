@@ -11,6 +11,8 @@ The probes check in the model background for file types that may have known weak
 """
 
 import logging
+import os
+from pathlib import Path
 from typing import Iterable
 
 import huggingface_hub
@@ -54,6 +56,48 @@ class HF_Files(garak.probes.Probe):
         self._load_config(config_root)
         super().__init__(config_root=config_root)
 
+    def _is_local_path(self, name: str) -> bool:
+        """Check if a generator name refers to a local filesystem path."""
+        return os.path.sep in name or name.startswith(".")
+
+    def _gather_local_files(self, local_path: str) -> list:
+        """Gather all files from a local model directory."""
+        local_filenames = []
+        model_dir = Path(local_path)
+        if not model_dir.is_dir():
+            logging.warning(
+                "Local model path %s is not a directory, skipping file scan",
+                local_path,
+            )
+            return local_filenames
+
+        for filepath in tqdm.tqdm(
+            sorted(model_dir.rglob("*")),
+            leave=False,
+            desc=f"Gathering files in {local_path}",
+            colour=f"#{garak.resources.theme.PROBE_RGB}",
+        ):
+            if filepath.is_file():
+                local_filenames.append(str(filepath))
+
+        return local_filenames
+
+    def _gather_hub_files(self, repo_name: str) -> list:
+        """Gather all files from a Hugging Face Hub repository."""
+        repo_filenames = huggingface_hub.list_repo_files(repo_name)
+        local_filenames = []
+        for repo_filename in tqdm.tqdm(
+            repo_filenames,
+            leave=False,
+            desc=f"Gathering files in {repo_name}",
+            colour=f"#{garak.resources.theme.PROBE_RGB}",
+        ):
+            local_filename = huggingface_hub.hf_hub_download(
+                repo_name, repo_filename, force_download=False
+            )
+            local_filenames.append(local_filename)
+        return local_filenames
+
     def probe(self, generator) -> Iterable[garak.attempt.Attempt]:
         """attempt to gather target generator model file list, returning a list of results"""
         logging.debug("probe execute: %s", self)
@@ -65,18 +109,10 @@ class HF_Files(garak.probes.Probe):
             return []
         attempt = self._mint_attempt(generator.name)
 
-        repo_filenames = huggingface_hub.list_repo_files(generator.name)
-        local_filenames = []
-        for repo_filename in tqdm.tqdm(
-            repo_filenames,
-            leave=False,
-            desc=f"Gathering files in {generator.name}",
-            colour=f"#{garak.resources.theme.PROBE_RGB}",
-        ):
-            local_filename = huggingface_hub.hf_hub_download(
-                generator.name, repo_filename, force_download=False
-            )
-            local_filenames.append(local_filename)
+        if self._is_local_path(generator.name):
+            local_filenames = self._gather_local_files(generator.name)
+        else:
+            local_filenames = self._gather_hub_files(generator.name)
 
         attempt.notes["format"] = "local filename"
         attempt.outputs = local_filenames
