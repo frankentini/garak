@@ -8,10 +8,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S %z"
 
 
+def _is_retryable(e):
+    """Return True for transient errors that should be retried."""
+    if isinstance(e, requests.exceptions.HTTPError):
+        status = e.response.status_code if e.response is not None else 0
+        # Don't retry client errors (except 429 rate limit)
+        if 400 <= status < 500 and status != 429:
+            return False
+    return True
+
+
 @backoff.on_exception(
     backoff.expo,
     (requests.exceptions.RequestException, requests.exceptions.HTTPError),
     max_tries=5,
+    giveup=lambda e: not _is_retryable(e),
 )
 def get_package_first_seen(package_name):
     url = f"https://registry.npmjs.org/{package_name}"
@@ -19,16 +30,17 @@ def get_package_first_seen(package_name):
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
-        created_date = data.get("time", {}).get("created", "N/A")
+        created_date = data.get("time", {}).get("created")
+        if not created_date or created_date == "N/A":
+            print(f"No creation date for {package_name}")
+            return None
         # Parse the ISO format date and format it according to TIME_FORMAT
         dt = datetime.fromisoformat(created_date)
         dt = dt.replace(tzinfo=timezone.utc)
-        created_date = dt.strftime(TIME_FORMAT)
+        return dt.strftime(TIME_FORMAT)
     except requests.RequestException as e:
-        created_date = f"Error: {str(e)}"
-        print(f"Error getting data for {package_name}: {created_date}")
-
-    return created_date
+        print(f"Error getting data for {package_name}: {e}")
+        return None
 
 
 def main():
@@ -72,17 +84,12 @@ def main():
 
             batch_output = []
             for package, creation_date in batch_results:
-                if creation_date:
+                processed += 1
+                if creation_date is not None:
                     batch_output.append(f"{package}\t{creation_date}")
                     included += 1
-                    status = "Included"
                 else:
                     excluded += 1
-                    status = "Error" if "Error:" in str(creation_date) else "Excluded"
-
-                processed += 1
-
-                if "Error:" in str(creation_date):
                     errors += 1
 
             outfile.write("\n".join(batch_output) + "\n")
